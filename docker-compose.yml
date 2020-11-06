@@ -1,0 +1,16 @@
+version: '3.0'
+
+services:
+  csapp_running_env:
+    build:
+      context: ./docker
+      args:
+        SSH_USER: ${SSH_USER}
+        SSH_PASS: ${SSH_PASS}
+    hostname: csapp_running_env
+    # stdin_open: true
+    # tty: true
+    volumes:
+      - ./datalab-handout:/home/${SSH_USER}/datalab-handout
+    ports:
+      - "2222:22"
