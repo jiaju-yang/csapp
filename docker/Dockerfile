@@ -11,7 +11,12 @@ RUN apt-get update \
     openssh-server \
     g++ \
     gcc-multilib \
-    make
+    make \
+    gdb \
+    zsh \
+    wget
+
+RUN sh -c "$(wget https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh -O -)"
  
 COPY ssh_config /etc/ssh/ssh_config
 COPY sshd_config /etc/ssh/sshd_config

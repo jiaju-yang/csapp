@@ -12,5 +12,6 @@ services:
     # tty: true
     volumes:
       - ./labs:/home/${SSH_USER}/labs
+      - ./test:/home/${SSH_USER}/test
     ports:
       - "2222:22"
