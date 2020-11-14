@@ -8,8 +8,8 @@ services:
         SSH_USER: ${SSH_USER}
         SSH_PASS: ${SSH_PASS}
     hostname: csapp_running_env
-    # stdin_open: true
-    # tty: true
+    stdin_open: true
+    tty: true
     volumes:
       - ./labs:/home/${SSH_USER}/labs
       - ./test:/home/${SSH_USER}/test
