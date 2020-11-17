@@ -2,7 +2,7 @@ ChallengeResponseAuthentication no
 # UsePAM yes # Prints login information
 PrintMotd no
 X11Forwarding no
-AllowTcpForwarding no
+AllowTcpForwarding yes
 AllowAgentForwarding no
 PermitTunnel no
 Subsystem sftp /usr/lib/openssh/sftp-server
