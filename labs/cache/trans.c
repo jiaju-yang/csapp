@@ -6,7 +6,7 @@
  *
  * A transpose function is evaluated by counting the number of misses
  * on a 1KB direct mapped cache with a block size of 32 bytes.
- */ 
+ */
 #include <stdio.h>
 #include "cachelab.h"
 
@@ -19,15 +19,29 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N]);
  *     searches for that string to identify the transpose function to
  *     be graded. 
  */
+int BLOCK_LENGTH = 16;
 char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
+    int i, i1, j, j1, k, l;
+    for (i = 0; i + BLOCK_LENGTH < N; i += BLOCK_LENGTH)
+        for (j = 0; j + BLOCK_LENGTH < M; j += BLOCK_LENGTH)
+            for (i1 = i; i1 < i + BLOCK_LENGTH; i1++)
+                for (j1 = j; j1 < j + BLOCK_LENGTH; j1++)
+                    B[j1][i1] = A[i1][j1];
+    for (k = 0; k < i; k++)
+        for (l = j; l < M; l++)
+            B[l][k] = A[k][l];
+
+    for (k = i; k < N; k++)
+        for (l = 0; l < M; l++)
+            B[l][k] = A[k][l];
 }
 
 /* 
  * You can define additional transpose functions below. We've defined
  * a simple one below to help you get started. 
- */ 
+ */
 
 /* 
  * trans - A simple baseline transpose function, not optimized for the cache.
@@ -37,13 +51,14 @@ void trans(int M, int N, int A[N][M], int B[M][N])
 {
     int i, j, tmp;
 
-    for (i = 0; i < N; i++) {
-        for (j = 0; j < M; j++) {
+    for (i = 0; i < N; i++)
+    {
+        for (j = 0; j < M; j++)
+        {
             tmp = A[i][j];
             B[j][i] = tmp;
         }
-    }    
-
+    }
 }
 
 /*
@@ -56,11 +71,10 @@ void trans(int M, int N, int A[N][M], int B[M][N])
 void registerFunctions()
 {
     /* Register your solution function */
-    registerTransFunction(transpose_submit, transpose_submit_desc); 
+    registerTransFunction(transpose_submit, transpose_submit_desc);
 
     /* Register any additional transpose functions */
-    registerTransFunction(trans, trans_desc); 
-
+    registerTransFunction(trans, trans_desc);
 }
 
 /* 
@@ -72,13 +86,15 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N])
 {
     int i, j;
 
-    for (i = 0; i < N; i++) {
-        for (j = 0; j < M; ++j) {
-            if (A[i][j] != B[j][i]) {
+    for (i = 0; i < N; i++)
+    {
+        for (j = 0; j < M; ++j)
+        {
+            if (A[i][j] != B[j][i])
+            {
                 return 0;
             }
         }
     }
     return 1;
 }
-
