@@ -14,6 +14,8 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #include "mm.h"
 #include "memlib.h"
@@ -34,210 +36,202 @@ team_t team = {
     /* Second member's email address (leave blank if none) */
     ""};
 
+typedef uint32_t word;
+typedef unsigned long number_of_words;
+
+#define WSIZE (sizeof(word))
+#define DSIZE (2 * WSIZE)
+#define _CHUNKSIZE (1 << 12)
+#define CHUNK_WORDS (_CHUNKSIZE / WSIZE)
+#define MIN_MALLOC_WORDS 4
+
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
+
+#define _PACK(size, alloc) ((size) | (alloc))
+
+#define GET(p) (*(word *)(p))
+#define PUT(p, val) (*(word *)(p) = (val))
+
+#define _GET_SIZE(p) (GET(p) & ~0x7)
+#define _GET_SIZE_IN_WORD(p) (_GET_SIZE(p) / WSIZE)
+#define _GET_ALLOC(p) (GET(p) & 0x1)
+#define GET_BLK_SIZE(bp) (_GET_SIZE_IN_WORD(HDRP(bp)))
+#define GET_BLK_ALLOC(bp) (_GET_ALLOC(HDRP(bp)))
+#define SET_BLK_HDR(bp, words, alloc) (PUT(HDRP(bp), _PACK(words * WSIZE, alloc)))
+#define SET_BLK_FTR(bp, words, alloc) (PUT(FTRP(bp), _PACK(words * WSIZE, alloc)))
+
+#define HDRP(bp) ((word *)(bp)-1)
+#define FTRP(bp) ((word *)(bp) + GET_BLK_SIZE(bp) - 2)
+
+#define NEXT_BLKP(bp) ((word *)(bp) + GET_BLK_SIZE(bp))
+#define PREV_BLKP(bp) ((word *)(bp)-_GET_SIZE_IN_WORD((word *)(bp)-2))
+
+#define REACH_EPILOGUE(bp) (!_GET_SIZE(HDRP(bp)) && GET_BLK_ALLOC(bp))
+#define SET_NEXT_BLK_AS_EPILOGUE(bp) (PUT(FTRP(bp) + 1, 1))
+
 extern int mm_init(void);
 extern void *mm_malloc(size_t size);
 extern void mm_free(void *bp);
 extern void *mm_realloc(void *bp, size_t size);
 
-static void *extend_heap(size_t words);
-static void *coalesce(void *bp);
-static void *find_fit(size_t size);
-static void place(void *bp, size_t size);
-static void split(void *bp, size_t size);
-static int mm_check(int lineNo);
+static void *extend_heap(number_of_words words);
+static void *coalesce(word *bp);
+static void *find_fit(number_of_words size);
+static void place(word *bp, number_of_words size);
+static void split(word *bp, number_of_words size);
+static int mm_check(int line_no);
 
-#define WSIZE 4
-#define DSIZE (2 * WSIZE)
-#define CHUNKSIZE (1 << 12)
+static word *heap_listp;
 
-#define MAX(x, y) ((x) > (y) ? (x) : (y))
-
-#define PACK(size, alloc) ((size) | (alloc))
-
-#define GET(p) (*(unsigned int *)(p))
-#define PUT(p, val) (*(unsigned int *)(p) = (val))
-
-#define GET_SIZE(p) (GET(p) & ~0x7)
-#define GET_ALLOC(p) (GET(p) & 0x1)
-
-#define HDRP(bp) ((char *)(bp)-WSIZE)
-#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
-
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)))
-#define PREV_BLKP(bp) ((char *)(bp)-GET_SIZE((char *)(bp)-DSIZE))
-
-#define GET_EPILOGUE(bp) (!GET_SIZE(HDRP(bp)) && GET_ALLOC(HDRP(bp)))
-
-static char *heap_listp;
-
-/* 
- * mm_init - initialize the malloc package.
- */
 int mm_init(void)
 {
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
     PUT(heap_listp, 0);
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));
-    heap_listp += (2 * WSIZE);
-
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
+    heap_listp += 2;
+    SET_BLK_HDR(heap_listp, 2, 1);
+    SET_BLK_FTR(heap_listp, 2, 1);
+    SET_NEXT_BLK_AS_EPILOGUE(heap_listp);
+    if (extend_heap(CHUNK_WORDS) == NULL)
         return -1;
     return 0;
 }
 
-/* 
- * mm_malloc - Allocate a block by incrementing the brk pointer.
- *     Always allocate a block whose size is a multiple of the alignment.
- */
 void *mm_malloc(size_t size)
 {
-    size_t asize;
-    size_t extendsize;
-    char *bp;
+    number_of_words awords;
+    number_of_words extend_words;
+    word *bp;
 
     if (size == 0)
         return NULL;
 
     if (size <= DSIZE)
-        asize = 2 * DSIZE;
+        awords = MIN_MALLOC_WORDS;
     else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+        awords = (DSIZE / WSIZE) * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
 
-    if ((bp = find_fit(asize)) != NULL)
+    if ((bp = find_fit(awords)) != NULL)
     {
-        place(bp, asize);
+        place(bp, awords);
         return bp;
     }
-    extendsize = MAX(asize, CHUNKSIZE);
-    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
+    extend_words = MAX(awords, CHUNK_WORDS);
+    if ((bp = extend_heap(extend_words)) == NULL)
         return NULL;
-    place(bp, asize);
+    place(bp, awords);
     return bp;
 }
 
-/*
- * mm_free - Freeing a block does nothing.
- */
 void mm_free(void *bp)
 {
-    size_t size = GET_SIZE(HDRP(bp));
-
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
+    number_of_words words = GET_BLK_SIZE(bp);
+    SET_BLK_HDR(bp, words, 0);
+    SET_BLK_FTR(bp, words, 0);
     coalesce(bp);
 }
 
-/*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
- */
 void *mm_realloc(void *bp, size_t size)
 {
-    size_t copySize = GET_SIZE(HDRP(bp));
-    if (size < copySize)
+    number_of_words copy_words = GET_BLK_SIZE(bp);
+    number_of_words new_words = size / WSIZE;
+    if (new_words < copy_words)
         return bp;
 
-    void *newBp = mm_malloc(size);
-    void *oldBp = bp;
-    if (newBp == NULL)
+    word *new_bp = mm_malloc(size);
+    word *old_bp = bp;
+    if (new_bp == NULL)
         return NULL;
-    memcpy(newBp, oldBp, copySize);
-    mm_free(oldBp);
-    return newBp;
+    memcpy(new_bp, old_bp, copy_words * WSIZE);
+    mm_free(old_bp);
+    return new_bp;
 }
 
-static void *extend_heap(size_t words)
+static void *extend_heap(number_of_words words)
 {
-    char *bp;
-    size_t size;
+    word *bp;
+    number_of_words awords;
 
-    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
-    if ((long)(bp = mem_sbrk(size)) == -1)
+    awords = (words % 2) ? words + 1 : words;
+    if ((long)(bp = mem_sbrk(awords * WSIZE)) == -1)
         return NULL;
 
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
-
+    SET_BLK_HDR(bp, awords, 0);
+    SET_BLK_FTR(bp, awords, 0);
+    SET_NEXT_BLK_AS_EPILOGUE(bp);
     return coalesce(bp);
 }
 
-static void *coalesce(void *bp)
+static void *coalesce(word *bp)
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
+    bool prev_alloc = GET_BLK_ALLOC(PREV_BLKP(bp));
+    bool next_alloc = GET_BLK_ALLOC(NEXT_BLKP(bp));
+    number_of_words words = GET_BLK_SIZE(bp);
 
     if (prev_alloc && next_alloc)
         return bp;
     else if (prev_alloc && !next_alloc)
     {
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size, 0));
+        words += GET_BLK_SIZE(NEXT_BLKP(bp));
+        SET_BLK_HDR(bp, words, 0);
+        SET_BLK_FTR(bp, words, 0);
     }
     else if (!prev_alloc && next_alloc)
     {
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        words += GET_BLK_SIZE(PREV_BLKP(bp));
+        SET_BLK_HDR(PREV_BLKP(bp), words, 0);
+        SET_BLK_FTR(PREV_BLKP(bp), words, 0);
         bp = PREV_BLKP(bp);
     }
     else
     {
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        words += (GET_BLK_SIZE(PREV_BLKP(bp)) + GET_BLK_SIZE(NEXT_BLKP(bp)));
+        SET_BLK_HDR(PREV_BLKP(bp), words, 0);
+        SET_BLK_FTR(NEXT_BLKP(bp), words, 0);
         bp = PREV_BLKP(bp);
     }
 
     return bp;
 }
 
-static void *find_fit(size_t size)
+static void *find_fit(number_of_words words)
 {
-    char *bp;
-    for (bp = NEXT_BLKP(heap_listp); !GET_EPILOGUE(bp); bp = NEXT_BLKP(bp))
-        if ((GET_SIZE(HDRP(bp)) >= size) && (!GET_ALLOC(HDRP(bp))))
-        {
+    word *bp;
+    for (bp = NEXT_BLKP(heap_listp); !REACH_EPILOGUE(bp); bp = NEXT_BLKP(bp))
+        if ((GET_BLK_SIZE(bp) >= words) && (!GET_BLK_ALLOC(bp)))
             return bp;
-        }
     return NULL;
 }
 
-static void place(void *bp, size_t size)
+static void place(word *bp, number_of_words words)
 {
-    if (GET_SIZE(HDRP(bp)) > size + DSIZE)
-    {
-        split(bp, size);
-    }
-    PUT(HDRP(bp), PACK(size, 1));
-    PUT(FTRP(bp), PACK(size, 1));
+    if (GET_BLK_SIZE(bp) > words + 2)
+        split(bp, words);
+    SET_BLK_HDR(bp, words, 1);
+    SET_BLK_FTR(bp, words, 1);
 }
 
-static void split(void *bp, size_t size)
+static void split(word *bp, number_of_words words)
 {
-    size_t sec_size = GET_SIZE(HDRP(bp)) - size;
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(sec_size, 0));
-    PUT(FTRP(NEXT_BLKP(bp)), PACK(sec_size, 0));
+    number_of_words sec_half_words = GET_BLK_SIZE(bp) - words;
+    SET_BLK_HDR(bp, words, 0);
+    SET_BLK_FTR(bp, words, 0);
+    SET_BLK_HDR(NEXT_BLKP(bp), sec_half_words, 0);
+    SET_BLK_FTR(NEXT_BLKP(bp), sec_half_words, 0);
 }
 
-static int mm_check(int lineno)
+static int mm_check(int line_no)
 {
-    char *bp = heap_listp;
-    printf("\nMemory check called from %d\n", lineno);
-    printf("Unused padding word at: %p\n", bp - DSIZE);
-    printf("Unused padding word block size: %d, block allocated: %d\n", GET_SIZE(bp - DSIZE), GET_ALLOC(bp - DSIZE));
-    for (; !GET_EPILOGUE(bp); bp = NEXT_BLKP(bp))
+    word *bp = heap_listp;
+    printf("\nMemory check called from %d\n", line_no);
+    printf("Unused padding word at: %p\n", bp - 2);
+    printf("Unused padding word block size: %d words, block allocated: %d\n", GET_BLK_SIZE(bp - 1), GET_BLK_ALLOC(bp - 1));
+    for (; !REACH_EPILOGUE(bp); bp = NEXT_BLKP(bp))
     {
-        printf("Block header at %p\n", bp - WSIZE);
-        printf("Header block size: %d, footer block size %d\nHeader block allocated: %d, footer block allocated: %d\n", GET_SIZE(HDRP(bp)), GET_SIZE(FTRP(bp)), GET_ALLOC(HDRP(bp)), GET_ALLOC(FTRP(bp)));
+        printf("Block header at %p\n", HDRP(bp));
+        printf("Header block size: %d words, footer block size %d words\nHeader block allocated: %d, footer block allocated: %d\n", GET_BLK_SIZE(bp), _GET_SIZE_IN_WORD(FTRP(bp)), GET_BLK_ALLOC(bp), _GET_ALLOC(FTRP(bp)));
     }
-    printf("Epilogue block at %p\n", FTRP(bp) + WSIZE);
-    printf("Epilogue block size: %d, block allocated: %d\n", GET_SIZE(FTRP(bp) + WSIZE), GET_ALLOC(FTRP(bp) + WSIZE));
+    printf("Epilogue block at %p\n", HDRP(bp));
+    printf("Epilogue block size: %d words, block allocated: %d\n", GET_BLK_SIZE(bp), GET_BLK_ALLOC(bp));
     return 0;
 }
