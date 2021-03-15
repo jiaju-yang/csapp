@@ -66,8 +66,17 @@ typedef unsigned long number_of_words;
 #define NEXT_BLKP(bp) ((word *)(bp) + GET_BLK_SIZE(bp))
 #define PREV_BLKP(bp) ((word *)(bp)-_GET_SIZE_IN_WORD((word *)(bp)-2))
 
-#define REACH_EPILOGUE(bp) (!_GET_SIZE(HDRP(bp)) && GET_BLK_ALLOC(bp))
+#define REACH_EPILOGUE(bp) (!GET_BLK_SIZE(bp) && GET_BLK_ALLOC(bp))
 #define SET_NEXT_BLK_AS_EPILOGUE(bp) (PUT(FTRP(bp) + 1, 1))
+
+#define NEXT_FREE(bp) ((word *)(bp) + 1)
+#define PREV_FREE(bp) ((word *)(bp))
+#define NEXT_FREE_BLKP(bp) (GET(NEXT_FREE(bp)))
+#define PREV_FREE_BLKP(bp) (GET(PREV_FREE(bp)))
+#define SET_NEXT_FREE_BLKP(bp, next_bp) (PUT(NEXT_FREE(bp), next_bp))
+#define SET_PREV_FREE_BLKP(bp, prev_bp) (PUT(PREV_FREE(bp), prev_bp))
+#define MARK_FIRST_FREE_BLK(bp) (PUT(PREV_FREE(bp), NULL))
+#define IS_FIRST_FREE_BLK(bp) (GET(PREV_FREE(bp)) == NULL)
 
 extern int mm_init(void);
 extern void *mm_malloc(size_t size);
@@ -79,9 +88,12 @@ static void *coalesce(word *bp);
 static void *find_fit(number_of_words size);
 static void place(word *bp, number_of_words size);
 static void split(word *bp, number_of_words size);
+static void insert_free(word *bp);
+static void remove_free(word *bp);
 static int mm_check(int line_no);
 
 static word *heap_listp;
+static word *free_block_listp;
 
 int mm_init(void)
 {
@@ -92,8 +104,12 @@ int mm_init(void)
     SET_BLK_HDR(heap_listp, 2, 1);
     SET_BLK_FTR(heap_listp, 2, 1);
     SET_NEXT_BLK_AS_EPILOGUE(heap_listp);
-    if (extend_heap(CHUNK_WORDS) == NULL)
+    free_block_listp = NULL;
+
+    word *bp;
+    if ((bp = extend_heap(CHUNK_WORDS)) == NULL)
         return -1;
+    insert_free(bp);
     return 0;
 }
 
@@ -119,6 +135,7 @@ void *mm_malloc(size_t size)
     extend_words = MAX(awords, CHUNK_WORDS);
     if ((bp = extend_heap(extend_words)) == NULL)
         return NULL;
+    insert_free(bp);
     place(bp, awords);
     return bp;
 }
@@ -128,7 +145,7 @@ void mm_free(void *bp)
     number_of_words words = GET_BLK_SIZE(bp);
     SET_BLK_HDR(bp, words, 0);
     SET_BLK_FTR(bp, words, 0);
-    coalesce(bp);
+    insert_free(coalesce(bp));
 }
 
 void *mm_realloc(void *bp, size_t size)
@@ -169,44 +186,53 @@ static void *coalesce(word *bp)
     number_of_words words = GET_BLK_SIZE(bp);
 
     if (prev_alloc && next_alloc)
+    {
         return bp;
+    }
     else if (prev_alloc && !next_alloc)
     {
+        remove_free(NEXT_BLKP(bp));
         words += GET_BLK_SIZE(NEXT_BLKP(bp));
         SET_BLK_HDR(bp, words, 0);
         SET_BLK_FTR(bp, words, 0);
     }
     else if (!prev_alloc && next_alloc)
     {
+        remove_free(PREV_BLKP(bp));
         words += GET_BLK_SIZE(PREV_BLKP(bp));
         SET_BLK_HDR(PREV_BLKP(bp), words, 0);
         SET_BLK_FTR(PREV_BLKP(bp), words, 0);
         bp = PREV_BLKP(bp);
     }
-    else
+    else if (!prev_alloc && !next_alloc)
     {
+        remove_free(PREV_BLKP(bp));
+        remove_free(NEXT_BLKP(bp));
         words += (GET_BLK_SIZE(PREV_BLKP(bp)) + GET_BLK_SIZE(NEXT_BLKP(bp)));
         SET_BLK_HDR(PREV_BLKP(bp), words, 0);
         SET_BLK_FTR(NEXT_BLKP(bp), words, 0);
         bp = PREV_BLKP(bp);
     }
-
     return bp;
 }
 
 static void *find_fit(number_of_words words)
 {
     word *bp;
-    for (bp = NEXT_BLKP(heap_listp); !REACH_EPILOGUE(bp); bp = NEXT_BLKP(bp))
-        if ((GET_BLK_SIZE(bp) >= words) && (!GET_BLK_ALLOC(bp)))
+    for (bp = free_block_listp; bp != NULL; bp = NEXT_FREE_BLKP(bp))
+        if (GET_BLK_SIZE(bp) >= words)
             return bp;
     return NULL;
 }
 
 static void place(word *bp, number_of_words words)
 {
-    if (GET_BLK_SIZE(bp) > words + 2)
+    remove_free(bp);
+    if (GET_BLK_SIZE(bp) >= words + MIN_MALLOC_WORDS)
+    {
         split(bp, words);
+        insert_free(NEXT_BLKP(bp));
+    }
     SET_BLK_HDR(bp, words, 1);
     SET_BLK_FTR(bp, words, 1);
 }
@@ -224,14 +250,58 @@ static int mm_check(int line_no)
 {
     word *bp = heap_listp;
     printf("\nMemory check called from %d\n", line_no);
+    printf("First free block at: %p\n", HDRP(free_block_listp));
     printf("Unused padding word at: %p\n", bp - 2);
     printf("Unused padding word block size: %d words, block allocated: %d\n", GET_BLK_SIZE(bp - 1), GET_BLK_ALLOC(bp - 1));
     for (; !REACH_EPILOGUE(bp); bp = NEXT_BLKP(bp))
     {
         printf("Block header at %p\n", HDRP(bp));
         printf("Header block size: %d words, footer block size %d words\nHeader block allocated: %d, footer block allocated: %d\n", GET_BLK_SIZE(bp), _GET_SIZE_IN_WORD(FTRP(bp)), GET_BLK_ALLOC(bp), _GET_ALLOC(FTRP(bp)));
+        if (!GET_BLK_ALLOC(bp))
+        {
+            printf("Previous free block at: %p\n", PREV_FREE_BLKP(bp));
+            printf("Next free block at: %p\n", NEXT_FREE_BLKP(bp));
+        }
     }
     printf("Epilogue block at %p\n", HDRP(bp));
     printf("Epilogue block size: %d words, block allocated: %d\n", GET_BLK_SIZE(bp), GET_BLK_ALLOC(bp));
     return 0;
+}
+
+static void insert_free(word *bp)
+{
+    word *cur_head = free_block_listp;
+    free_block_listp = bp;
+    if (cur_head != NULL)
+    {
+        SET_PREV_FREE_BLKP(cur_head, bp);
+        SET_NEXT_FREE_BLKP(bp, cur_head);
+    }
+    else
+        SET_NEXT_FREE_BLKP(bp, NULL);
+    MARK_FIRST_FREE_BLK(bp);
+}
+
+static void remove_free(word *bp)
+{
+    if (bp == NULL)
+        return;
+    word *prev = PREV_FREE_BLKP(bp);
+    word *next = NEXT_FREE_BLKP(bp);
+
+    if (IS_FIRST_FREE_BLK(bp) && next == NULL)
+        free_block_listp = NULL;
+    else if (IS_FIRST_FREE_BLK(bp) && next != NULL)
+    {
+        free_block_listp = next;
+        MARK_FIRST_FREE_BLK(next);
+    }
+    else if (!IS_FIRST_FREE_BLK(bp) && next == NULL)
+        SET_NEXT_FREE_BLKP(prev, NULL);
+    else
+    {
+        SET_PREV_FREE_BLKP(next, prev);
+        SET_NEXT_FREE_BLKP(prev, next);
+    }
+    return;
 }
