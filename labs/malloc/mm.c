@@ -91,6 +91,7 @@ static void split(word *bp, number_of_words size);
 static void insert_free(word *bp);
 static void remove_free(word *bp);
 static int mm_check(int line_no);
+static void display_block(word *bp);
 
 static word *heap_listp;
 static word *free_block_listp;
@@ -227,14 +228,21 @@ static void *find_fit(number_of_words words)
 
 static void place(word *bp, number_of_words words)
 {
+    number_of_words blk_words = GET_BLK_SIZE(bp);
+
     remove_free(bp);
-    if (GET_BLK_SIZE(bp) >= words + MIN_MALLOC_WORDS)
+    if (blk_words >= words + MIN_MALLOC_WORDS)
     {
         split(bp, words);
         insert_free(NEXT_BLKP(bp));
+        SET_BLK_HDR(bp, words, 1);
+        SET_BLK_FTR(bp, words, 1);
     }
-    SET_BLK_HDR(bp, words, 1);
-    SET_BLK_FTR(bp, words, 1);
+    else
+    {
+        SET_BLK_HDR(bp, blk_words, 1);
+        SET_BLK_FTR(bp, blk_words, 1);
+    }
 }
 
 static void split(word *bp, number_of_words words)
@@ -304,4 +312,17 @@ static void remove_free(word *bp)
         SET_NEXT_FREE_BLKP(prev, next);
     }
     return;
+}
+
+static void display_block(word *bp)
+{
+    printf("Block header at %p\n", HDRP(bp));
+    printf("Header block size: %d words, footer block size %d words\nHeader block allocated: %d, footer block allocated: %d\n", GET_BLK_SIZE(bp), _GET_SIZE_IN_WORD(FTRP(bp)), GET_BLK_ALLOC(bp), _GET_ALLOC(FTRP(bp)));
+    printf("Prev block at: %p\n", PREV_BLKP(bp));
+    printf("Next block at: %p\n", NEXT_BLKP(bp));
+    if (!GET_BLK_ALLOC(bp))
+    {
+        printf("Previous free block at: %p\n", PREV_FREE_BLKP(bp));
+        printf("Next free block at: %p\n", NEXT_FREE_BLKP(bp));
+    }
 }
