@@ -151,10 +151,17 @@ void mm_free(void *bp)
 
 void *mm_realloc(void *bp, size_t size)
 {
+    if (bp == NULL)
+        return mm_malloc(size);
+    if (size == 0)
+    {
+        mm_free(bp);
+        return NULL;
+    }
     number_of_words copy_words = GET_BLK_SIZE(bp);
     number_of_words new_words = size / WSIZE;
     if (new_words < copy_words)
-        return bp;
+        copy_words = new_words;
 
     word *new_bp = mm_malloc(size);
     word *old_bp = bp;
