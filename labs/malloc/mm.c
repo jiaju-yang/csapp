@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "mm.h"
 #include "memlib.h"
@@ -44,6 +45,7 @@ typedef unsigned long number_of_words;
 #define _CHUNKSIZE (1 << 12)
 #define CHUNK_WORDS (_CHUNKSIZE / WSIZE)
 #define MIN_MALLOC_WORDS 4
+#define SEGRATED_LIST_SLOTS 32
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
@@ -77,6 +79,8 @@ typedef unsigned long number_of_words;
 #define SET_PREV_FREE_BLKP(bp, prev_bp) (PUT(PREV_FREE(bp), prev_bp))
 #define MARK_FIRST_FREE_BLK(bp) (PUT(PREV_FREE(bp), NULL))
 #define IS_FIRST_FREE_BLK(bp) (GET(PREV_FREE(bp)) == NULL)
+#define FREE_LIST_INDEX(words) ((number_of_words)(log2(words)))
+#define FREE_LIST_INDEX_BY_BLKP(bp) (FREE_LIST_INDEX(GET_BLK_SIZE(bp)))
 
 extern int mm_init(void);
 extern void *mm_malloc(size_t size);
@@ -94,7 +98,7 @@ static int mm_check(int line_no);
 static void display_block(word *bp);
 
 static word *heap_listp;
-static word *free_block_listp;
+static word *free_block_lists[SEGRATED_LIST_SLOTS] = {};
 
 int mm_init(void)
 {
@@ -105,7 +109,9 @@ int mm_init(void)
     SET_BLK_HDR(heap_listp, 2, 1);
     SET_BLK_FTR(heap_listp, 2, 1);
     SET_NEXT_BLK_AS_EPILOGUE(heap_listp);
-    free_block_listp = NULL;
+    for (number_of_words index = 0; index < SEGRATED_LIST_SLOTS; index++){
+        free_block_lists[index] = NULL;
+    }
 
     word *bp;
     if ((bp = extend_heap(CHUNK_WORDS)) == NULL)
@@ -227,9 +233,13 @@ static void *coalesce(word *bp)
 static void *find_fit(number_of_words words)
 {
     word *bp;
-    for (bp = free_block_listp; bp != NULL; bp = NEXT_FREE_BLKP(bp))
-        if (GET_BLK_SIZE(bp) >= words)
-            return bp;
+    number_of_words index;
+    for (index = FREE_LIST_INDEX(words); index < SEGRATED_LIST_SLOTS; index++)
+    {
+        for (bp = free_block_lists[index]; bp != NULL; bp = NEXT_FREE_BLKP(bp))
+            if (GET_BLK_SIZE(bp) >= words)
+                return bp;
+    }
     return NULL;
 }
 
@@ -265,7 +275,6 @@ static int mm_check(int line_no)
 {
     word *bp = heap_listp;
     printf("\nMemory check called from %d\n", line_no);
-    printf("First free block at: %p\n", HDRP(free_block_listp));
     printf("Unused padding word at: %p\n", bp - 2);
     printf("Unused padding word block size: %d words, block allocated: %d\n", GET_BLK_SIZE(bp - 1), GET_BLK_ALLOC(bp - 1));
     for (; !REACH_EPILOGUE(bp); bp = NEXT_BLKP(bp))
@@ -285,8 +294,8 @@ static int mm_check(int line_no)
 
 static void insert_free(word *bp)
 {
-    word *cur_head = free_block_listp;
-    free_block_listp = bp;
+    word *cur_head = free_block_lists[FREE_LIST_INDEX_BY_BLKP(bp)];
+    free_block_lists[FREE_LIST_INDEX_BY_BLKP(bp)] = bp;
     if (cur_head != NULL)
     {
         SET_PREV_FREE_BLKP(cur_head, bp);
@@ -305,10 +314,10 @@ static void remove_free(word *bp)
     word *next = NEXT_FREE_BLKP(bp);
 
     if (IS_FIRST_FREE_BLK(bp) && next == NULL)
-        free_block_listp = NULL;
+        free_block_lists[FREE_LIST_INDEX_BY_BLKP(bp)] = NULL;
     else if (IS_FIRST_FREE_BLK(bp) && next != NULL)
     {
-        free_block_listp = next;
+        free_block_lists[FREE_LIST_INDEX_BY_BLKP(bp)] = next;
         MARK_FIRST_FREE_BLK(next);
     }
     else if (!IS_FIRST_FREE_BLK(bp) && next == NULL)
