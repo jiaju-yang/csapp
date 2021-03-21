@@ -19,3 +19,4 @@ services:
       - ./test:/home/${SSH_USER}/test
     ports:
       - "2222:22"
+      - "8000:8000"

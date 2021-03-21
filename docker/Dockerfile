@@ -18,7 +18,10 @@ RUN apt-get update \
     ca-certificates \
     wget \
     vim \
-    valgrind
+    valgrind \
+    netcat \
+    curl \
+    telnet
  
 COPY ssh_config /etc/ssh/ssh_config
 COPY sshd_config /etc/ssh/sshd_config
