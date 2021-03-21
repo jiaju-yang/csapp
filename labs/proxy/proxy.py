@@ -1,5 +1,6 @@
 import click
 import socket
+import threading
 
 MAX_LINE_LENGTH = 8192
 
@@ -30,6 +31,28 @@ def forward(host, method, uri, version, headers):
     return recv_data
 
 
+def process_request(conn):
+    try:
+        method, uri, version, headers = parse_request(conn)
+    except ValueError:
+        print('Invalid request.')
+        conn.send('Invalid request.\n'.encode('utf-8'))
+        conn.close()
+        return
+    host = headers.get('Host', headers.get('host', None))
+    if not host:
+        print('No host. Cannot forward.')
+        conn.close()
+        return
+    if method != 'GET':
+        print('Not implemented method.')
+        conn.close()
+        return
+    data = forward(host, method, uri, version, headers)
+    conn.sendall(data)
+    conn.close()
+
+
 def run_server(port):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -42,25 +65,8 @@ def run_server(port):
     while True:
         conn, (ip, port) = server_socket.accept()
         print(f'Accepted connection from ({ip}, {port})')
-        try:
-            method, uri, version, headers = parse_request(conn)
-        except ValueError:
-            print('Invalid request.')
-            conn.send('Invalid request.\n'.encode('utf-8'))
-            conn.close()
-            continue
-        host = headers.get('Host', headers.get('host', None))
-        if not host:
-            print('No host. Cannot forward.')
-            conn.close()
-            continue
-        if method != 'GET':
-            print('Not implemented method.')
-            conn.close()
-            continue
-        data = forward(host, method, uri, version, headers)
-        conn.sendall(data)
-        conn.close()
+        thread = threading.Thread(target=process_request, args=(conn,), daemon=True)
+        thread.start()
     server_socket.close()
 
 
